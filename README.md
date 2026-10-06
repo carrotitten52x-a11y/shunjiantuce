@@ -47,6 +47,20 @@ node server.js            # 默认 3000；改端口：PORT=8080 node server.js
 
 浏览器打开 `http://localhost:3000`。
 
+## 获取可分享的公开链接（重要）
+
+沙箱预览链接（`*.preview.iflow.cn`）受**平台会话鉴权**保护：只有当前登录该沙箱环境的浏览器能打开；分享给好友会返回 **401**（`aone-super-error-capture` 网关页）。这是平台安全门，**非应用故障**（后端本地 `/`、`/?guest=`、`/api/health` 均 200，`server.js` 唯一的 401 在 `/api/auth` 密码错误分支），也无法绕过。
+
+要得到**任何人可打开、跨设备同步、可只读分享**的永久链接，请把后端部署到公网主机。本仓库已就绪，二选一：
+
+### 方案 A：Render 一键部署（推荐，免运维）
+1. 打开 https://dashboard.render.com → **New +** → **Blueprint**，连接本仓库 `carrotitten52x-a11y/shunjiantuce`。
+2. Render 自动读取 `render.yaml` 完成部署，几分钟后给你一个 `https://shunjiantuce.onrender.com` 形式的公网域名。
+3. 该域名即「可分享链接」；`https://<你的域名>/?guest=手机号` 即「只读分享链接」，好友无需登录即可查看。
+> ⚠️ Render 免费实例文件系统**非持久化**，实例重启会清空 `data/`、`uploads/`（账号与图片丢失）。需长期保存请升级付费实例并挂载 Persistent Disk，或改用方案 B。
+
+### 方案 B：自有 VPS + pm2（数据持久，见下节）
+
 ## 部署到服务器
 
 后端需**常驻进程**（Node），并保证 `data/` 与 `uploads/` 目录可写且持久化。

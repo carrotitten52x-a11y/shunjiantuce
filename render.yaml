@@ -1,0 +1,21 @@
+# Render 蓝图：一键部署「瞬间图册」到公网，获得可分享的公开链接
+# 用法：推送到 GitHub 后，在 https://dashboard.render.com 选 "New +" -> "Blueprint"
+#       指向本仓库，Render 自动读取本文件完成部署。
+services:
+  - type: web
+    name: shunjiantuce
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # Render 免费实例文件系统非持久化，重启会丢 data/ 与 uploads/。
+      # 需长期保存数据请升级付费实例并挂载 Persistent Disk（挂载到 /var/data），
+      # 或改用自有 VPS + pm2（见 README「部署到服务器」）。
+      - key: DATA_ROOT
+        value: /var/data
