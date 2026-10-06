@@ -1322,6 +1322,41 @@
   var API_BASE = '';   /* 同源部署，留空即当前域；如需分离可填 https://你的域名 */
   function apiUrl(p){ return API_BASE + p; }
 
+  /* 【后端探测 + 本机模式降级】
+     云端后端可达时：数据/账号/图片走 /api/*，跨设备同步。
+     纯静态托管（后端不可达）时：自动降级本机模式——账号存 localStorage（加盐哈希，
+     密码不出本机），作品/头像/背景存本机，任意设备打开即可登录、编辑、浏览；
+     代价是本机模式数据不跨设备共享。BACKEND 默认 true，故云端部署行为完全不变。 */
+  var BACKEND = true;                 /* 默认云端模式；probeBackend 探测失败自动置 false */
+  var LOCAL_ACCOUNTS_KEY = 'sj-local-accounts-v1';
+  function localAccounts(){ try{ return JSON.parse(localStorage.getItem(LOCAL_ACCOUNTS_KEY) || '{}'); }catch(e){ return {}; } }
+  function saveLocalAccounts(m){ try{ localStorage.setItem(LOCAL_ACCOUNTS_KEY, JSON.stringify(m)); return true; }catch(e){ return false; } }
+  /* 简易哈希（本机模式用；非安全级，仅避免明文存密码） */
+  function hashPwd(pwd, salt){
+    var out = 0; var s = String(salt) + '|' + String(pwd);
+    for(var i=0;i<s.length;i++){ out = ((out<<5) - out + s.charCodeAt(i))|0; }
+    return String(salt) + ':' + (out>>>0).toString(16);
+  }
+  function probeBackend(){
+    return new Promise(function(res){
+      var done=false;
+      var timer=setTimeout(function(){ if(!done){ done=true; BACKEND=false; res(false); } }, 6000);
+      function fail(){ if(done) return; done=true; clearTimeout(timer); BACKEND=false; res(false); }
+      try{
+        fetch(apiUrl('/api/health'), { method:'GET', headers:{ 'Accept':'application/json' } })
+          .then(function(r){
+            if(done) return;
+            var ct=(r.headers.get('content-type')||'');
+            if(!r.ok || ct.indexOf('json')<0){ fail(); return; }
+            r.json().then(function(j){
+              if(done) return; done=true; clearTimeout(timer);
+              BACKEND=!!(j && j.ok===true); res(BACKEND);
+            }, fail);
+          }, fail);
+      }catch(e){ fail(); }
+    });
+  }
+
   var USER_KEY = 'xindong-user-v1';
 
   /* 标题区文案默认值与字数上限 */
@@ -1447,10 +1482,24 @@
     /* ---------- 账号鉴权（服务端，修复跨设备覆盖问题） ---------- */
     function accountExists(phone){
       if(!/^1\d{10}$/.test(phone)) return Promise.resolve(false);
+      if(!BACKEND){ return Promise.resolve(!!localAccounts()[phone]); }
       return jget(apiUrl('/api/accounts?phone=' + encodeURIComponent(phone)), {silent:true})
         .then(function(r){ return !!(r && r.exists); }, function(){ return false; });
     }
     function auth(phone, pwd){
+      if(!BACKEND){
+        /* 本机模式：账号存 localStorage（加盐哈希，密码不出本机），可登录/注册/校验 */
+        var m = localAccounts();
+        var rec = m[phone];
+        if(rec){
+          if(hashPwd(pwd, rec.salt) === rec.hash) return Promise.resolve({ ok:true, created:false });
+          return Promise.resolve({ ok:false, error:'密码不正确' });
+        }
+        var salt = Math.random().toString(36).slice(2, 12);
+        m[phone] = { salt:salt, hash:hashPwd(pwd, salt), created:Date.now() };
+        saveLocalAccounts(m);
+        return Promise.resolve({ ok:true, created:true });
+      }
       return jget(apiUrl('/api/auth'), {
         method:'POST',
         headers:{ 'Content-Type':'application/json' },
@@ -1468,6 +1517,13 @@
     /* ---------- 个人资料：头像 / 背景（存 URL） ---------- */
     function getProfile(phone){
       if(!phone) return Promise.resolve({avatar:'', bg:''});
+      if(!BACKEND){
+        try{
+          var av = (JSON.parse(localStorage.getItem('xindong-avatars-v1')||'{}')||{})[phone] || '';
+          var bg = (JSON.parse(localStorage.getItem('xindong-bg-v1')||'{}')||{})[phone] || '';
+          return Promise.resolve({ avatar:av, bg:bg });
+        }catch(e){ return Promise.resolve({avatar:'', bg:''}); }
+      }
       return jget(apiUrl('/api/profile?phone=' + encodeURIComponent(phone)), {silent:true})
         .then(function(r){
           return (r && typeof r==='object') ? { avatar:r.avatar||'', bg:r.bg||'' } : {avatar:'', bg:''};
@@ -1475,6 +1531,21 @@
     }
     function setProfile(phone, fields){
       if(!phone) return Promise.reject(new Error('no-phone'));
+      if(!BACKEND){
+        try{
+          if('avatar' in fields){
+            var am = JSON.parse(localStorage.getItem('xindong-avatars-v1')||'{}')||{};
+            if(fields.avatar) am[phone]=fields.avatar; else delete am[phone];
+            localStorage.setItem('xindong-avatars-v1', JSON.stringify(am));
+          }
+          if('bg' in fields){
+            var bm = JSON.parse(localStorage.getItem('xindong-bg-v1')||'{}')||{};
+            if(fields.bg) bm[phone]=fields.bg; else delete bm[phone];
+            localStorage.setItem('xindong-bg-v1', JSON.stringify(bm));
+          }
+        }catch(e){}
+        return Promise.resolve({ ok:true });
+      }
       var body = { phone: phone };
       if('avatar' in fields) body.avatar = fields.avatar;
       if('bg' in fields) body.bg = fields.bg;
@@ -1487,7 +1558,7 @@
     }
 
     return {
-      ok: function(){ return true; },
+      ok: function(){ return BACKEND; },
       pullWorks: pullWorks,
       pushWorks: pushWorks,
       uploadMedia: uploadMedia,
@@ -3241,8 +3312,16 @@
     document.documentElement.setAttribute('data-guest','1');
   })();
 
-  applyAuth();
   bindShare();
+  /* 先探测后端可达性，再决定云端/本机模式并初始化。
+     云端可达：跨设备同步（行为与之前完全一致）。
+     纯静态托管（后端不可达）：自动降级本机模式，任意设备打开即可登录/编辑/浏览。 */
+  probeBackend().then(function(){
+    applyAuth();
+    if(!BACKEND){
+      try{ toastMsg('当前为单机模式：数据保存在本设备。换设备同步需部署云端后端（见仓库 README）。'); }catch(e){}
+    }
+  });
 })();
 </script>
 <!--
