@@ -12,9 +12,11 @@ const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, 'data');
+// 存储根可自定义：便于把数据/图片直接落到本机指定目录（如 Windows D:\1【图片】）
+// DATA_ROOT：账号/作品/资料 JSON；UPLOAD_ROOT：上传的图片视频文件
+const DATA_DIR = process.env.DATA_ROOT ? path.resolve(process.env.DATA_ROOT) : path.join(ROOT, 'data');
 const WORKS_DIR = path.join(DATA_DIR, 'works');
-const UPLOAD_DIR = path.join(ROOT, 'uploads');
+const UPLOAD_DIR = process.env.UPLOAD_ROOT ? path.resolve(process.env.UPLOAD_ROOT) : path.join(ROOT, 'uploads');
 const PUBLIC_DIR = path.join(ROOT, 'public');
 
 const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json');
@@ -190,4 +192,6 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`瞬间图册 server 已启动: http://0.0.0.0:${PORT}`);
+  console.log(`数据目录: ${DATA_DIR}`);
+  console.log(`上传目录: ${UPLOAD_DIR}`);
 });
